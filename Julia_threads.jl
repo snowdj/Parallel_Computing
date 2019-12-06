@@ -5,48 +5,47 @@
 using Distributed
 using Distributions
 using Compat.Dates
-using SharedArrays
 
 #--------------------------------#
 #         Initialization         #
 #--------------------------------#
 
-# Number of cores/workers
-addprocs(5)
+# Number of threads
+println("started one julia process with $(Threads.nthreads()) threads.")
 
 # Grid for x
-@everywhere nx  = 1500;
+nx  = 1500;
 xmin            = 0.1;
 xmax            = 4.0;
 
 # Grid for e: parameters for Tauchen
-@everywhere ne  = 15;
+ ne  = 15;
 ssigma_eps      = 0.02058;
 llambda_eps     = 0.99;
 m               = 1.5;
 
 # Utility function
-@everywhere ssigma   = 2;
-@everywhere bbeta    = 0.97;
-@everywhere T        = 10;
+ ssigma   = 2;
+ bbeta    = 0.97;
+ T        = 10;
 
 # Prices
-@everywhere r  = 0.07;
-@everywhere w  = 5;
+ r  = 0.07;
+ w  = 5;
 
 # Initialize the grid for X
-@everywhere xgrid = zeros(nx)
+ xgrid = zeros(nx)
 
 # Initialize the grid for E and the transition probability matrix
-@everywhere egrid = zeros(ne)
-@everywhere P     = zeros(ne, ne)
+ egrid = zeros(ne)
+ P     = zeros(ne, ne)
 
 # Initialize value function V
-@everywhere V          = zeros(T, nx, ne)
-@everywhere V_tomorrow = zeros(nx, ne)
+ V          = zeros(T, nx, ne)
+ V_tomorrow = zeros(nx, ne)
 
 # Initialize value function as a shared array
-tempV = SharedArray{Float64}(ne*nx)
+tempV = zeros(ne*nx)
 
 #--------------------------------#
 #         Grid creation          #
@@ -93,7 +92,7 @@ end
 #--------------------------------#
 
 # Data structure of state and exogenous variables
-@everywhere struct modelState
+ struct modelState
   ind::Int64
   ne::Int64
   nx::Int64
@@ -110,7 +109,7 @@ end
 end
 
 # Function that computes value function, given vector of state variables
-@everywhere function value(currentState::modelState)
+ function value(currentState::modelState)
 
   ind     = currentState.ind
   age     = currentState.age
@@ -175,7 +174,7 @@ start = Dates.unix2datetime(time())
 
 for age = T:-1:1
 
-  @sync @distributed for ind = 1:(ne*nx)
+  Threads.@threads for ind = 1:(ne*nx)
 
     ix      = convert(Int, ceil(ind/ne));
     ie      = convert(Int, floor(mod(ind-0.05, ne))+1);

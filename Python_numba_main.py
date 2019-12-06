@@ -3,12 +3,12 @@
 #         House-keeping          #
 #--------------------------------#
 
+from numba import jit, jitclass, njit, prange, int64, float64
 import numpy
 import math
 import time
 from scipy.stats import norm
-from joblib import Parallel, delayed
-import multiprocessing
+from collections import OrderedDict
 import sys
 
 #--------------------------------#
@@ -16,7 +16,6 @@ import sys
 #--------------------------------#
 
 # Number of workers
-num_cores = int(sys.argv[1]);
 
 # Grid for x
 nx            = 1500;
@@ -45,8 +44,7 @@ xgrid = numpy.zeros(nx)
 egrid = numpy.zeros(ne)
 P     = numpy.zeros((ne, ne))
 
-# Initialize value function V
-V     = numpy.zeros((T, nx, ne))
+
 
 
 #--------------------------------#
@@ -97,10 +95,26 @@ for i in range(0,ne):
 # Value function
 VV = math.pow(-10.0, 5);
 
+specs = OrderedDict()
+specs['ind'] = int64
+specs['ne'] = int64
+specs['nx'] = int64
+specs['T'] = int64
+specs['age'] = int64
+specs['P'] = float64[:,:]
+specs['xgrid'] = float64[:]
+specs['egrid'] = float64[:]
+specs['ssigma'] = float64
+specs['bbeta'] = float64
+specs['w'] = float64
+specs['r'] = float64
+specs['V'] = float64[:,:,:]
+
 
 # Data structure of state and exogenous variables
+@jitclass(specs)
 class modelState(object):
-	def __init__(self,ind,ne,nx,T,age,P,xgrid,egrid,ssigma,bbeta,w,r):
+	def __init__(self,ind,ne,nx,T,age,P,xgrid,egrid,ssigma,bbeta,w,r,V):
 		self.ind		= ind
 		self.ne			= ne
 		self.nx			= nx
@@ -113,9 +127,11 @@ class modelState(object):
 		self.bbeta		= bbeta
 		self.w			= w
 		self.r			= r
+		self.V			= V
 
 # Function that returns value for a given state
 # ind: a unique state that corresponds to a pair (ie,ix)
+@njit
 def value_func(states):
 
 	ind = states.ind
@@ -130,6 +146,7 @@ def value_func(states):
 	bbeta = states.bbeta
 	w = states.w
 	r = states.r
+	V = states.V
 
 	ix = int(math.floor(ind/ne));
 	ie = int(math.floor(ind%ne));
@@ -165,38 +182,46 @@ print(" ")
 print("Life cycle computation: ")
 print(" ")
 
+@njit(parallel=True)
+def compute(age, V):
 
-start = time.time()
+	for ind in prange(0,nx*ne):
 
-for age in reversed(range(0,T)):
-
-	# This function computes `value_func` in parallel for all the states
-	results = Parallel(n_jobs=num_cores)(delayed(value_func)(modelState(ind,ne,nx,T,age,P,xgrid,egrid,ssigma,bbeta,w,r)) for ind in range(0,nx*ne))
-
-	# I write the results on the value matrix: V
-	for ind in range(0,nx*ne):
+		states = modelState(ind, ne, nx, T, age, P, xgrid, egrid, ssigma, bbeta, w, r, V)
 		
 		ix = int(math.floor(ind/ne));
 		ie = int(math.floor(ind%ne));
 
-		V[age, ix, ie] = results[ind][0];
+		V[age, ix, ie] = value_func(states)[0];
+
+	return(V)
+
+
+
+start = time.time()
+# Initialize value function V
+V     = numpy.zeros((T, nx, ne))
+
+for age in range(T-1, -1, -1):
+	V = compute(age, V)
 
 	finish = time.time() - start
-	print "Age: ", age+1, ". Time: ", round(finish, 4), " seconds."
+	print("Age: ", age+1, ". Time: ", round(finish, 4), " seconds.")
+
 
 finish = time.time() - start
-print "TOTAL ELAPSED TIME: ", round(finish, 4), " seconds. \n"
+print("TOTAL ELAPSED TIME: ", round(finish, 4), " seconds. \n")
 
 
 #---------------------#
 #     Some checks     #
 #---------------------#
 
-print " - - - - - - - - - - - - - - - - - - - - - \n"
-print "The first entries of the value function: \n"
+print(" - - - - - - - - - - - - - - - - - - - - - \n")
+print("The first entries of the value function: \n")
 
 for i in range(0,3):
 	print(round(V[0, 0, i], 5))
 
-print " \n"
+print(" \n")
 

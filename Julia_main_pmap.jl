@@ -2,15 +2,16 @@
 #         House-keeping          #
 #--------------------------------#
 
-workspace()
+using Distributed
 using Distributions
+using Compat.Dates
 
 #--------------------------------#
 #         Initialization         #
 #--------------------------------#
 
-# Number of workers
-# addprocs(1)
+# Number of cores/workers
+addprocs(5)
 
 # Grid for x
 nx            = 1500;
@@ -40,7 +41,8 @@ egrid = zeros(ne)
 P     = zeros(ne, ne)
 
 # Initialize value function V
-V     = zeros(T, nx, ne)
+V           = zeros(T, nx, ne)
+V_tomorrow  = zeros(nx, ne)
 
 
 #--------------------------------#
@@ -50,20 +52,16 @@ V     = zeros(T, nx, ne)
 # Grid for capital (x)
 size = nx;
 xstep = (xmax - xmin) /(size - 1);
-it = 0;
 for i = 1:nx
-  xgrid[i] = xmin + it*xstep;
-  it = it+1;
+  xgrid[i] = xmin + (i-1)*xstep;
 end
 
 # Grid for productivity (e) with Tauchen (1986)
 size = ne;
 ssigma_y = sqrt((ssigma_eps^2) / (1 - (llambda_eps^2)));
 estep = 2*ssigma_y*m / (size-1);
-it = 0;
 for i = 1:ne
-  egrid[i] = (-m*sqrt((ssigma_eps^2) / (1 - (llambda_eps^2))) + it*estep);
-  it = it+1;
+  egrid[i] = (-m*sqrt((ssigma_eps^2) / (1 - (llambda_eps^2))) + (i-1)*estep);
 end
 
 # Transition probability matrix (P) Tauchen (1986)
@@ -91,7 +89,7 @@ end
 #--------------------------------#
 
 # Data structure of state and exogenous variables
-@everywhere type modelState
+@everywhere struct modelState
   ind::Int64
   ne::Int64
   nx::Int64
@@ -102,7 +100,7 @@ end
   egrid::Vector{Float64}
   ssigma::Float64
   bbeta::Float64
-  V::Array{Float64,3}
+  V::Array{Float64,2}
   w::Float64
   r::Float64
 end
@@ -127,7 +125,7 @@ end
   ix      = convert(Int, floor((ind-0.05)/ne))+1;
   ie      = convert(Int, floor(mod(ind-0.05, ne))+1);
 
-  VV      = -10^3;
+  VV      = -10.0^3;
   ixpopt  = 0;
 
 
@@ -136,7 +134,7 @@ end
       expected = 0.0;
       if(age < T)
         for iep = 1:ne
-          expected = expected + P[ie, iep]*V[age+1, ixp, iep];
+          expected = expected + P[ie, iep]*V[ixp, iep];
         end
       end
 
@@ -145,7 +143,7 @@ end
       utility = (cons^(1-ssigma))/(1-ssigma) + bbeta*expected;
 
       if(cons <= 0)
-        utility = -10^(5);
+        utility = -10.0^(5);
       end
 
       if(utility >= VV)
@@ -173,7 +171,7 @@ start = Dates.unix2datetime(time())
 
 for age = T:-1:1
 
-  pars = [modelState(ind,ne,nx,T,age,P,xgrid,egrid,ssigma,bbeta, V,w,r) for ind in 1:ne*nx];
+  pars = [modelState(ind,ne,nx,T,age,P,xgrid,egrid,ssigma,bbeta, V_tomorrow,w,r) for ind in 1:ne*nx];
 
   s = pmap(value,pars)
 
@@ -182,6 +180,7 @@ for age = T:-1:1
     ie      = convert(Int, floor(mod(ind-0.05, ne))+1);
 
     V[age, ix, ie] = s[ind]
+    V_tomorrow[ix, ie] = s[ind]
   end
 
   finish = convert(Int, Dates.value(Dates.unix2datetime(time())- start))/1000;
@@ -206,5 +205,5 @@ print(" \n")
 
 # For comparison, I print first entries of value function
 for i = 1:3
-  print(round(V[1, 1, i], 5), "\n")
+  print(round(V[1, 1, i], digits=5), "\n")
 end
